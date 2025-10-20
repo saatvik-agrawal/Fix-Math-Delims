@@ -2,7 +2,7 @@
 
 ## What is this?
 
-A Python utility that converts ChatGPT's LaTeX math notation into Obsidian-compatible markdown format. When you copy mathematical content from ChatGPT, it often uses delimiters like `\(...\)` for inline math and `\[...\]` for display math, which don't render properly in Obsidian. This tool automatically converts those delimiters to Obsidian's preferred format (`$...$` for inline, `$$...$$` for display math) while intelligently preserving code blocks and handling edge cases. 
+A Python utility that converts ChatGPT's LaTeX math notation into Obsidian-compatible markdown format. When you copy mathematical content from ChatGPT, it often uses delimiters like `\(...\)` for inline math and `\[...\]` for display math, which don't render properly in Obsidian. This tool automatically converts those delimiters to Obsidian's preferred format (`$...$` for inline, `$$...$$` for display math) while intelligently preserving code blocks and handling edge cases.
 
 Other markdown-based systems like Jupyter notebooks, and various static site generators, can also benefit from this.
 
@@ -82,3 +82,11 @@ osascript -e 'tell application "System Events" to keystroke "v" using command do
 * **Protects new** **`$$ … $$` blocks** immediately so we never touch inside them later.
 * Converts inline** ** **only when the parentheses content looks like math** , and keeps** ****token+paren** together (`T(x,y)`,** **`2(1)`).
 * Fixes** ** **spacing** :** **`word$math$ → word $math$`,** **`-$x$ → - $x$`,** **`$math$word → $math$ word`.
+
+
+### V3.3
+
+* Removed the “token+paren” merger (it was over-aggressive).
+* Fixed the** ** **spacing bug** :** **`"$([^$]+)\$([A-Za-z0-9])" -> "$\\1$ \\2"` so the math content is preserved.
+* Kept conservative inline conversion:** **`(dx)`,** **`(dT)`,** **`(x,y,z)`,** **`(\nabla T)` →** **`$dx$`,** **`$dT$`,** **`$x,y,z$`,** **`$\nabla T$`.
+* Converts paragraph** ****`[ … ]`** blocks →** **`$$ … $$` and** ****protects** them so no later edits occur inside.

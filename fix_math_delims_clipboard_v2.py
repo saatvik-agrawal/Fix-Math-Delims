@@ -87,20 +87,12 @@ def convert_backslash_brackets(text: str) -> str:
     return text
 
 def convert_square_bracket_blocks(text: str) -> str:
-    """
-    Paragraph-level [ ... ] with at least one newline inside -> $$ ... $$.
-    Supports CR/LF and trailing spaces.
-    """
+    # Paragraph-level [ ... ] with at least one newline inside -> $$ ... $$.
     patt = re.compile(r"^[ \t]*\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\][ \t]*$", re.MULTILINE)
     return patt.sub(lambda m: f"\n$$\n{m.group(1).strip()}\n$$\n", text)
 
-def convert_token_plus_paren(text: str) -> str:
-    # Join token immediately followed by (...) into one inline math: A(x), T(x,y), 2(1)
-    patt = re.compile(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[^()\r\n]{1,80})\s*\)")
-    return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
-
 def convert_inline_parentheses(text: str) -> str:
-    # Remaining (...) that look mathy -> $...$ ; skip plain single-words like "(however)".
+    # ( ... ) that looks mathy -> $...$ ; skip single plain words like (however)
     def repl(m: Match[str]) -> str:
         inner = m.group(1)
         if "\n" in inner or "[" in inner or "]" in inner: return m.group(0)
@@ -113,10 +105,10 @@ def convert_inline_parentheses(text: str) -> str:
     return re.sub(r"\(([^()\r\n]{1,160})\)", repl, text)
 
 def fix_inline_spacing(text: str) -> str:
-    # word$math$ -> word $math$
+    # BEFORE $: word$math$ -> word $math$
     text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
-    # $math$word -> $math$ word
-    text = re.sub(r"\$(?:[^$]+)\$([A-Za-z0-9])", r"$ \1", text)
+    # AFTER $: $math$word -> $math$ word   (BUG FIX: keep the math content)
+    text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)
     # "-$x$" -> "- $x$"
     text = re.sub(r"^-\s*\$", r"- $", text, flags=re.MULTILINE)
     # collapse excessive spaces around inline math
@@ -124,8 +116,8 @@ def fix_inline_spacing(text: str) -> str:
     return text
 
 def normalize_dollars(text: str) -> str:
-    text = re.sub(r"\${3,}", "$$", text)                     # $$$ -> $$
-    text = re.sub(r"\$\s+([^\$]+?)\s+\$", r"$\1$", text)     # trim inside
+    text = re.sub(r"\${3,}", "$$", text)                          # $$$ -> $$
+    text = re.sub(r"\$\s+([^\$]+?)\s+\$", r"$\1$", text)          # trim inside
     text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)  # single-line display
     return text
 
@@ -139,7 +131,6 @@ def convert(text: str) -> str:
     # 3) protect new $$...$$
     protected = _protect_math(protected, sent)
     # 4) inline conversions outside math/code
-    protected = convert_token_plus_paren(protected)
     protected = convert_inline_parentheses(protected)
     protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
