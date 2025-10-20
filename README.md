@@ -1,3 +1,7 @@
+## # What is this?
+
+A simple snippet using Python to convert copied text from ChatGPT into text that is pastable and legible in obsidian. The copied text then does not require any additional plugins or changes in Obsidian.
+
 ## How to use?
 
 1. Download and save the Python file in a permanent place in your directory.
