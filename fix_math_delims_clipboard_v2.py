@@ -153,7 +153,7 @@ def convert_token_paren_numeric(text: str) -> str:
 def convert_inline_parentheses(text: str) -> str:
     ALLOW_EXACT = {"x","y","z","T","v","u"}
 
-    # v4.2 stricter check: require real math signals, digits, function call, or d-variables.
+    # v4.2/4.3 stricter check: require real math signals, digits, function call, or d-variables.
     def is_inline_math_candidate(inner: str) -> bool:
         if looks_like_latex(inner):  # \frac, \nabla, \alpha, ...
             return True
@@ -257,19 +257,30 @@ def normalize_dollars(text: str) -> str:
     text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)
     return text
 
-# ---------- master pipeline ----------
+# ---------- master pipeline (v4.3) ----------
 def convert(text: str) -> str:
     protected, sent = _protect(text)
     protected = convert_code_fences(protected)
     protected = convert_backslash_brackets(protected)
     protected = convert_square_bracket_blocks(protected)
+
+    # Fix matrices while $$...$$ content is visible
     protected = fix_matrices_in_math_blocks(protected)
-    protected = protect_outer_math_parens(protected, sent)
+
+    # PROTECT math blocks BEFORE touching outer parentheses (prevents @@INL leaks)
     protected = _protect_math(protected, sent)
+
+    # Now it's safe to wrap only non-math outer parens
+    protected = protect_outer_math_parens(protected, sent)
+
+    # Inline conversions
     protected = convert_token_paren_numeric(protected)
     protected = convert_inline_parentheses(protected)
+
+    # Spacing and normalization
     protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
+
     return _unprotect(protected, sent)
 
 def main():
