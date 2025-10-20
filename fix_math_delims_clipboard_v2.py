@@ -37,10 +37,10 @@ DOLLAR_BLOCK_RE   = re.compile(r"\$\$[\s\S]*?\$\$", re.MULTILINE)
 
 def _protect(text: str) -> Tuple[str, List[str]]:
     sent: List[str] = []
-    def drop_in(s: str, tag: str) -> str:
+    def keep(s: str, tag: str) -> str:
         sent.append(s); return f"@@{tag}_{len(sent)-1}@@"
-    text = BACKTICK_FENCE_RE.sub(lambda m: drop_in(m.group(0), "CODEFENCE"), text)
-    text = INLINE_CODE_RE.sub (lambda m: drop_in(m.group(0), "INLINE"),    text)
+    text = BACKTICK_FENCE_RE.sub(lambda m: keep(m.group(0), "CODEFENCE"), text)
+    text = INLINE_CODE_RE.sub (lambda m: keep(m.group(0), "INLINE"),    text)
     return text, sent
 
 def _protect_math(text: str, sent: List[str]) -> str:
@@ -86,54 +86,47 @@ def convert_backslash_brackets(text: str) -> str:
     return text
 
 def convert_square_bracket_blocks(text: str) -> str:
-    # Paragraph-level [ ... ] -> $$ ... $$
-    def repl(m: Match[str]) -> str:
-        inner = m.group(1).strip()
-        return f"\n$$\n{inner}\n$$\n"
-    patt = r"(?:^|\n\s*\n)\s*\[\s*\n?([\s\S]*?)\n?\s*\]\s*(?=\n\s*\n|$)"
-    return re.sub(patt, repl, text)
+    # MORE PERMISSIVE: any [ ... ] with at least one newline inside becomes a block.
+    return re.sub(r"\[\s*\n([\s\S]*?)\n\s*\]", lambda m: f"\n$$\n{m.group(1).strip()}\n$$\n", text)
 
 def convert_token_plus_paren(text: str) -> str:
-    # join token immediately followed by (...) into one inline math block: A(x), T(x,y), 2(1)
-    # Don't cross words; keep it tight.
-    def repl(m: Match[str]) -> str:
-        pre = m.group("pre")
-        inner = m.group("inner").strip()
-        return f"${pre}({inner})$"
-    return re.sub(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[^()\n]{1,80})\s*\)", repl, text)
+    # Join token immediately followed by (...) into one inline math block: A(x), T(x,y), 2(1)
+    return re.sub(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[^()\n]{1,80})\s*\)",
+                  lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
 
 def convert_inline_parentheses(text: str) -> str:
-    # Remaining (...) that look mathy -> $...$
+    # Remaining (...) that look mathy -> $...$ (skip obvious prose-only)
     def repl(m: Match[str]) -> str:
         inner = m.group(1)
         if "\n" in inner or "[" in inner or "]" in inner:
             return m.group(0)
+        # allow commas/numbers/symbols; block plain single words like "(however)"
         if looks_like_latex(inner) or looks_like_mathish(inner) or re.match(r"^[A-Za-z0-9,;:+\-*/^_=.\s]+$", inner):
+            # If it's a single plain word with no digits/op symbols, skip
+            if re.match(r"^[A-Za-z]{2,}$", inner.strip()):
+                return m.group(0)
             return f"${inner.strip()}$"
         return m.group(0)
-    # Handle ((...)) first
+
+    # Double parens first
     text = re.sub(r"\(\(([^()\n]{1,160})\)\)", lambda m: f"$({m.group(1).strip()})$", text)
     return re.sub(r"\(([^()\n]{1,160})\)", repl, text)
 
-def merge_adjacent_inline(text: str) -> str:
-    # $\nabla T$\cdot$\mathbf{dr}$ -> $\nabla T \cdot \mathbf{dr}$
-    text = re.sub(r"\$(.*?)\$\s*\\cdot\s*\$(.*?)\$", lambda m: f"$ {m.group(1).strip()} \\cdot {m.group(2).strip()} $", text)
-    return text
-
 def fix_inline_spacing(text: str) -> str:
-    # Add a space if a letter/number touches a $block$ with no space
-    text = re.sub(r"([A-Za-z0-9])\$(.+?)\$", r"\1 $\2$", text)
-    text = re.sub(r"\$(.+?)\$([A-Za-z0-9])", r"$\1$ \2", text)
-    # Ensure list dash has a space before inline math: -$x$ -> - $x$
+    # word$math$ -> word $math$
+    text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
+    # $math$word -> $math$ word
+    text = re.sub(r"\$(?:[^$]+)\$([A-Za-z0-9])", r"$ \1", text)
+    # "-$x$" -> "- $x$"
     text = re.sub(r"^-\s*\$", r"- $", text, flags=re.MULTILINE)
-    # Collapse multiple spaces around inline math
+    # collapse excessive spaces around inline math
     text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)
     return text
 
 def normalize_dollars(text: str) -> str:
-    text = re.sub(r"\${3,}", "$$", text)
-    text = re.sub(r"\$\s+([^\$]+?)\s+\$", r"$\1$", text)      # trim inside
-    text = re.sub(r"\$\$\n([^\n]+)\n\$\$", r"$$\1$$", text)   # one-liners
+    text = re.sub(r"\${3,}", "$$", text)                     # $$$ -> $$
+    text = re.sub(r"\$\s+([^\$]+?)\s+\$", r"$\1$", text)     # trim inside
+    text = re.sub(r"\$\$\n([^\n]+)\n\$\$", r"$$\1$$", text)  # single-line display
     return text
 
 def convert(text: str) -> str:
@@ -143,19 +136,17 @@ def convert(text: str) -> str:
     protected = convert_code_fences(protected)
     protected = convert_backslash_brackets(protected)
     protected = convert_square_bracket_blocks(protected)
-    # 3) PROTECT new $$...$$ so later passes don't touch inside
+    # 3) protect new $$...$$ so later passes don't touch inside
     protected = _protect_math(protected, sent)
     # 4) inline conversions outside math/code
     protected = convert_token_plus_paren(protected)
     protected = convert_inline_parentheses(protected)
-    protected = merge_adjacent_inline(protected)
     protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
     # 5) restore
     return _unprotect(protected, sent)
 
 def main():
-    # clipboard -> clipboard by default
     src = get_clipboard() or sys.stdin.read()
     out = convert(src)
     set_clipboard(out)

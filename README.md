@@ -22,13 +22,6 @@ This version helpful if you are copying long paragraphs with multiple bits of ma
 * **Double parens** `((...))` handled first and replaced with a single inline** **`$ (... ) $`.
 * Still** ****won’t touch** fenced code** **`…` or inline code** **``…``.
 
-#### Additional Updates to V2
-
-* Converts bracket blocks first, then** ****protects** **…**…**** from further edits.
-* Converts** ****token+paren** as a unit (e.g.,** **`2(1)` →** **`$2(1)$`,** **`T(x,y)` →** **`$T(x,y)$`).
-* Cleans** ****spacing** around inline math (before/after words and list dashes).
-* Merges adjacent inline blocks like** **`$\nabla T$\cdot$\mathbf{dr}$` →** **`$\nabla T \cdot \mathbf{dr}$`.
-
 ### Use version 1 for light conversion.
 
 Helpful if you are just copying specific parts of a longer response and just touching the math.
@@ -57,4 +50,21 @@ osascript -e 'tell application "System Events" to keystroke "v" using command do
 # Notes
 
 - File path names are case and whitespace sensitive.
-- Remove "\\" which are replaced for " " (spaces) in file path when copying file path from finder in MacOS.
+- In Atext snippet, Remove "\\" which are replaced for " " (spaces) in file path when copying file path from finder in MacOS.
+
+# Dev Logs (Updates to V2)
+
+### V3.0
+
+* Converts bracket blocks first, then** ****protects** **…**…**** from further edits.
+* Converts** ****token+paren** as a unit (e.g.,** **`2(1)` →** **`$2(1)$`,** **`T(x,y)` →** **`$T(x,y)$`).
+* Cleans** ****spacing** around inline math (before/after words and list dashes).
+* Merges adjacent inline blocks like** **`$\nabla T$\cdot$\mathbf{dr}$` →** **`$\nabla T \cdot \mathbf{dr}$`.
+
+### V3.1
+
+* Converts** ****any** `[ ... ]` (with newlines inside) →** **`$$ ... $$` (more permissive regex).
+* **Protects** **…**…** immediately** so we never touch inside blocks afterward.
+* **Removes** the risky “merge adjacent inline” logic.
+* Fixes** ****spacing** around inline math: word↔`$...$`, list dashes, etc.
+* Adds a small guard to stop converting** **`(plain words)` unless it looks mathy.
