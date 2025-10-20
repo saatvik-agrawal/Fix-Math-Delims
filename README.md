@@ -2,6 +2,9 @@
 
 1. Download and save the Python file in a permanent place in your directory.
 2. Then make it executable using the below command.
+   ```
+   chmod +x fix_math_delims_clipboard_v2.py # write the full file path
+   ```
 3. Use Atext or similar tools to use this as quick shortcut to convert copied content into Obsidian Ready Math. See the Atext section below for help with using atext.
 
 ## Which Python file?
