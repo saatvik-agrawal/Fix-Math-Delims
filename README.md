@@ -1,6 +1,12 @@
+# Fix Math Delimiters when copying from ChatGPT
+
 ## What is this?
 
-A simple snippet using Python to convert copied text from ChatGPT into text that is pastable and legible in obsidian. The copied text then does not require any additional plugins or changes in Obsidian.
+A Python utility that converts ChatGPT's LaTeX math notation into Obsidian-compatible markdown format. When you copy mathematical content from ChatGPT, it often uses delimiters like `\(...\)` for inline math and `\[...\]` for display math, which don't render properly in Obsidian. This tool automatically converts those delimiters to Obsidian's preferred format (`$...$` for inline, `$$...$$` for display math) while intelligently preserving code blocks and handling edge cases. 
+
+Other markdown-based systems like Jupyter notebooks, and various static site generators, can also benefit from this.
+
+The script works directly with your system clipboard, making it perfect for integration with text expansion tools like AText on macOS. Simply copy from ChatGPT, trigger the conversion, and paste directly into Obsidian—no manual editing or plugins required.
 
 ## How to use?
 
@@ -9,7 +15,7 @@ A simple snippet using Python to convert copied text from ChatGPT into text that
    ```
    chmod +x fix_math_delims_clipboard_v2.py # write the full file path
    ```
-3. Use Atext or similar tools to use this as quick shortcut to convert copied content into Obsidian Ready Math. See the Atext section below for help with using atext.
+3. Use AText or similar tools to use this as quick shortcut to convert copied content into Obsidian Ready Math. See the Atext section below for help with using AText.
 
 ## Which Python file?
 
@@ -45,9 +51,10 @@ Helpful if you are just copying specific parts of a longer response and just tou
 /usr/bin/python3 "/Users/username/fix_math_delims_clipboard.py" # moodify with your own file path; Use Homebrew python if you have it; otherwise /usr/bin/python3
 # Paste result
 osascript -e 'tell application "System Events" to keystroke "v" using command down'
+
 ```
 
-# Notes
+# Notes.
 
 - File path names are case and whitespace sensitive.
 - In Atext snippet, Remove "\\" which are replaced for " " (spaces) in file path when copying file path from finder in MacOS.
@@ -68,3 +75,10 @@ osascript -e 'tell application "System Events" to keystroke "v" using command do
 * **Removes** the risky “merge adjacent inline” logic.
 * Fixes** ****spacing** around inline math: word↔`$...$`, list dashes, etc.
 * Adds a small guard to stop converting** **`(plain words)` unless it looks mathy.
+
+### V3.2
+
+* Robustly turns any paragraph-level** ****`[ … ]`** (with line breaks) into** ****`$$ … $$`** first (supports** **`\r?\n`, extra spaces).
+* **Protects new** **`$$ … $$` blocks** immediately so we never touch inside them later.
+* Converts inline** ** **only when the parentheses content looks like math** , and keeps** ****token+paren** together (`T(x,y)`,** **`2(1)`).
+* Fixes** ** **spacing** :** **`word$math$ → word $math$`,** **`-$x$ → - $x$`,** **`$math$word → $math$ word`.
