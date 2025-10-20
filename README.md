@@ -1,119 +1,207 @@
-# Fix Math Delimiters when copying from ChatGPT
+# 🧮 Fix-Math-Delims (for macOS)
 
-## What is this?
+**Seamlessly copy math from ChatGPT (on macOS) to Obsidian with perfect LaTeX rendering. No additional plugins like 'linter' required in Obsidian.**
 
-A Python utility that converts ChatGPT's LaTeX math notation into Obsidian-compatible markdown format. When you copy mathematical content from ChatGPT, it often uses delimiters like `\(...\)` for inline math and `\[...\]` for display math, which don't render properly in Obsidian. This tool automatically converts those delimiters to Obsidian's preferred format (`$...$` for inline, `$$...$$` for display math) while intelligently preserving code blocks and handling edge cases.
+---
 
-Other markdown-based systems like Jupyter notebooks, and various static site generators, can also benefit from this.
+## 🚀 Overview
 
-The script works directly with your system clipboard, making it perfect for integration with text expansion tools like AText on macOS. Simply copy from ChatGPT, trigger the conversion, and paste directly into Obsidian—no manual editing or plugins required.
+When you copy mathematical explanations from ChatGPT into** ** **Obsidian** , the math often breaks because:
 
-## How to use?
+* ChatGPT uses** **`\[ ... \]` and** **`\( ... \)` delimiters,
+* NotebookLM and Obsidian expect** **`$...$` and** **`$$...$$`,
+* Matrices, vectors, and parentheses sometimes nest incorrectly, and
+* Markdown snippets can produce strange placeholder tokens.
 
-1. Download and save the Python file in a permanent place in your directory.
-2. Then make it executable using the below command.
+This tool —** ****Fix-Math-Delims** — automatically converts copied Markdown to** ** **Obsidian-compatible math** , preserving readability and fixing formatting on the fly.
+
+---
+
+## ✨ Features
+
+| Feature                                  | Description                                                                                                              |
+| :--------------------------------------- | :----------------------------------------------------------------------------------------------------------------------- |
+| 🔄**Clipboard Automation**         | Automatically converts whatever you copied from ChatGPT and pastes back into your clipboard.                            |
+| 🧩**Bracket Conversion**           | Converts `\[...\]` and `\(...\)` to `$$...$$` and `$...$`.                                                       |
+| 🧠**Smart Inline Math Detection**  | Wraps inline math (like `(x+y)` or `(dT=2(1)+3(0))`) in `$...$` without breaking plain English parentheses.        |
+| 🧱**Matrix Repair**                | Fixes `bmatrix`, `pmatrix`, etc., by adding proper `\\` and `[3pt]` row spacing.                                 |
+| 🧾**Display-Block Conversion**     | Converts `[ ... ]` multi-line equations into full `$$ ... $$` blocks.                                                |
+| 🪄**No Placeholder Leaks**         | v4.3 fixes prior issues with `@@INL_###@@` tokens by reordering the pipeline.                                          |
+| ✍️**aText / Hotkey Integration** | Fully compatible with macOS automation tools like**aText** ,  **Keyboard Maestro** , or  **Raycast** . |
+
+---
+
+## 🧰 Requirements
+
+| System         | Version                                     |
+| :------------- | :------------------------------------------ |
+| macOS          | ✅ Tested on macOS 14+                      |
+| Python         | ≥ 3.9 (ships with macOS)                   |
+| Clipboard Tool | `pbpaste` / `pbcopy` (default on macOS) |
+
+---
+
+## 🛠️ Installation
+
+1. **Download**
+   Simply download the "fix_math_delims_clipboard.py" file. I recommend you to save it in a permanent directory such as your user home folder to avoid accidental deletions.
+
+2. **Ensure executable permission**
+
+   ```bash
+   chmod +x fix_math_delims_clipboard.py # enter your full file path.
    ```
-   chmod +x fix_math_delims_clipboard_v2.py # write the full file path
+3. **(Optional) Install dependencies**
+   None required — only Python standard library.
+4. **Test manually**
+   Copy some ChatGPT text containing** **`\[ ... \]` math, then run:
+   **IMP: Ensure you copy the entire ChatGPT output using the copy button in ChatGPT.**
+
+   ```bash
+   python3 fix_math_delims_clipboard.py # again, enter full file path.
    ```
-3. Use AText or similar tools to use this as quick shortcut to convert copied content into Obsidian Ready Math. See the Atext section below for help with using AText.
 
-## Which Python file?
+   Paste anywhere — the math should render perfectly in Obsidian.
 
-### Use version 2 for aggressive conversion.
+---
 
-This version helpful if you are copying long paragraphs with multiple bits of math.
+## ⚡ Quick Automation with aText (Mac)
 
-* **Paragraph** **`[ ... ]` blocks** now convert to** **`$$ ... $$` even if they’re simple algebra (no explicit** **`\frac`, etc.).
-* **Inline** **`( ... )`** converts to** **`$...$` when it looks “math-ish” (operators, equals, dx/dy/dz,** **`T = T(…)`, etc.).
-* **Double parens** `((...))` handled first and replaced with a single inline** **`$ (... ) $`.
-* Still** ****won’t touch** fenced code** **`…` or inline code** **``…``.
+To bind this to a keyboard shortcut (so you do not need to manually execute the file each time), consider using macOS Shortcuts, macOS automator or AText. AText is a popular text replacement utility available for macOS and Windows. Below is how automate it with AText.
 
-### Use version 1 for light conversion.
+1. Open** ****AText** → add a** ** **New Snippet** .
+2. Select **Scipt** > then **Shell**.
+3. Paste this script as the** ** **snippet body** :
+   ```bash
+   #!/bin/zsh
+   /opt/homebrew/bin/python3 "/Users/YOURNAME/Github Repos/Fix-Math-Delims/fix_math_delims_clipboard.py" # Get clipboard, run converter, and replace clipboard
+   osascript -e 'tell application "System Events" to keystroke "v" using command down' # Paste result
+   ```
+4. Assign a hotkey (e.g.** **`⌘⇧V`) or abbreviation (e.g.** **`gptmath`).
 
-Helpful if you are just copying specific parts of a longer response and just touching the math.
+Now, just:
 
-* Converts:
-  * `\(...\)` →** **`$...$` (inline math)
-  * `\[...\]` →** **`$$ ... $$` (display math)
-  * `latex …<span class="Apple-converted-space"> </span>`→** **`$$ … $$` (optional)
-  * Paragraph** **`[ ... ]` blocks that look like LaTeX →** **`$$ … $$`
-* **Does not** touch fenced code blocks (`…`) or inline code (``…``).
+* Copy from ChatGPT → hit your aText trigger → automatically pasted into Obsidian.
+  Instant clean** **`$...$` and** **`$$...$$` math!
 
-## AText Snippet for MacOS.
+---
 
-1. Select an abbreviation and optionally a hotkey.
-2. Then select Script followed by Shell.
-3. Now paste the below code snippet in the provided space.
+## 🧩 Examples
+
+### **Input (from ChatGPT)**
 
 ```
-#!/bin/zsh
-# Get clipboard, run converter, and replace clipboard
-/usr/bin/python3 "/Users/username/fix_math_delims_clipboard.py" # moodify with your own file path; Use Homebrew python if you have it; otherwise /usr/bin/python3
-# Paste result
-osascript -e 'tell application "System Events" to keystroke "v" using command down'
-
+[
+\mathbf{dr} =
+\begin{bmatrix}
+dx[3pt]
+dy[3pt]
+dz
+\end{bmatrix}
+]
 ```
 
-# Notes.
+### **Output (copied into Clipboard)**
 
-- File path names are case and whitespace sensitive.
-- In Atext snippet, Remove "\\" which are replaced for " " (spaces) in file path when copying file path from finder in MacOS.
+```markdown
+$$
+\mathbf{dr} =
+\begin{bmatrix}
+dx\\[3pt]
+dy\\[3pt]
+dz
+\end{bmatrix}
+$$
+```
 
-# Dev Logs (Updates to V2)
+---
 
-### V3.0
+### **Inline Example**
 
-* Converts bracket blocks first, then** ****protects** **…**…**** from further edits.
-* Converts** ****token+paren** as a unit (e.g.,** **`2(1)` →** **`$2(1)$`,** **`T(x,y)` →** **`$T(x,y)$`).
-* Cleans** ****spacing** around inline math (before/after words and list dashes).
-* Merges adjacent inline blocks like** **`$\nabla T$\cdot$\mathbf{dr}$` →** **`$\nabla T \cdot \mathbf{dr}$`.
+**Input**
 
-### V3.1
+```
+If you move 1 m east (x), 0 m north (y): (dT=2(1)+3(0)=2) °C → warmer.
+```
 
-* Converts** ****any** `[ ... ]` (with newlines inside) →** **`$$ ... $$` (more permissive regex).
-* **Protects** **…**…** immediately** so we never touch inside blocks afterward.
-* **Removes** the risky “merge adjacent inline” logic.
-* Fixes** ****spacing** around inline math: word↔`$...$`, list dashes, etc.
-* Adds a small guard to stop converting** **`(plain words)` unless it looks mathy.
+**Output**
 
-### V3.2
+```
+If you move 1 m east $x$, 0 m north $y$: $dT=2(1)+3(0)=2$ °C → warmer.
+```
 
-* Robustly turns any paragraph-level** ****`[ … ]`** (with line breaks) into** ****`$$ … $$`** first (supports** **`\r?\n`, extra spaces).
-* **Protects new** **`$$ … $$` blocks** immediately so we never touch inside them later.
-* Converts inline** ** **only when the parentheses content looks like math** , and keeps** ****token+paren** together (`T(x,y)`,** **`2(1)`).
-* Fixes** ** **spacing** :** **`word$math$ → word $math$`,** **`-$x$ → - $x$`,** **`$math$word → $math$ word`.
+---
 
+## 🧠 How It Works
 
-### V3.3
+The script processes your clipboard through several** ** **phases** :
 
-* Removed the “token+paren” merger (it was over-aggressive).
-* Fixed the** ** **spacing bug** :** **`"$([^$]+)\$([A-Za-z0-9])" -> "$\\1$ \\2"` so the math content is preserved.
-* Kept conservative inline conversion:** **`(dx)`,** **`(dT)`,** **`(x,y,z)`,** **`(\nabla T)` →** **`$dx$`,** **`$dT$`,** **`$x,y,z$`,** **`$\nabla T$`.
-* Converts paragraph** ****`[ … ]`** blocks →** **`$$ … $$` and** ****protects** them so no later edits occur inside.
+1. **Protection Layer**
+   Temporarily hides inline code, code fences, and existing** **`$$...$$` blocks.
+2. **Conversions**
+   * Converts** **`\[...\]` →** **`$$...$$`
+   * Converts** **`\(...\)` →** **`$...$`
+   * Converts** **`[…]` blocks →** **`$$...$$`
+   * Repairs matrices and spacing
+3. **Heuristic Wrapping**
+   Detects likely math expressions (e.g.,** **`(x+y)`,** **`(dT=2(1)+3(0))`)
+   and wraps them in** **`$...$`.
+4. **Outer Parentheses Logic**
+   Wraps only the** ***outermost* math expressions, preventing nested** **`$` errors.
+5. **Spacing Normalization**
+   Cleans** **`$ x $ → $x$`,** **`$x$word → $x$ word`, etc.
+6. **Clipboard Replacement**
+   The final Markdown is written back to clipboard automatically.
 
-### V3.4
+---
 
-##### Remaining Problems
+## 🧩 Folder Layout
 
-* **Single-word parens weren’t converted** —** **`(dx)`,** **`(dy)`,** **`(dz)`,** **`(T)` stayed literal because the “skip plain words” guard was too strict.
-* **`2(1)+3(0)` split into** **`2 $1$ + 3 $0$`** — we need a safe “token+paren” rule for cases like** **`a(…)` and digits followed by parens.
-* **Spacing around inline math** — things like** **`So$ T $depends`,** **`-$ x $`, and** **`$ T $` should become** **`So $T$ depends`,** **`- $x$`, and** **`$T$`.
+```
+Fix-Math-Delims/
+├── fix_math_delims_clipboard.py
+├── README.md
+└── Dev Files/
+    ├── fix_math_delims_clipboard_v1.py
+    ├── fix_math_delims_clipboard_v4.py
+    ├── more notes.md
+    ├── README_OLD.md
 
-##### Fixes
+```
+---
 
-* `(dx) (dy) (dz) (T)` →** **`$dx$`,** **`$dy$`,** **`$dz$`,** **`$T$`.
-* `2(1)+3(0)` stays intact as** ****one** math run:** **`$2(1)+3(0)$` (no** **`2 $1$`).
-* Spacing:** **`So$ T $depends` →** **`So $T$ depends`;** **`-$ x $` →** **`- $x$`.
-* The** **`[ … ]` blocks remain clean** **`$$ … $$` and protected; don’t touch inside.
+## 🧩 Troubleshooting
 
+| Problem                           | Likely Cause                                                        | Fix                                       |
+| :-------------------------------- | :------------------------------------------------------------------ | :---------------------------------------- |
+| aText says “no file”            | Ensure your script path has**no leading space** after quotes. |                                           |
+| Clipboard doesn’t change         | macOS automation may require accessibility permission for aText.    |                                           |
 
-### V3.5
+---
 
+## 🧭 Why It Matters
 
-* **(ORDER fixed)** —** **`2(1)` →** **`$2(1)$` instead of** **`2 $1$`.
-* **(dx)** , (dy), (dz), (T) →** **`$dx$`,** **`$dy$`,** **`$dz$`,** **`$T$`.
-* **Spacing fixed:**
-  * `So$ T $depends` →** **`So $T$ depends`.
-  * `-$ x $:` →** **`- $x$:`.
-* **Blocks** **`[ ... ]`** stay** **`$$ ... $$` untouched.
-* Works directly with** ****clipboard input/output** — ideal for aText hotkey workflow.
+ChatGPT exports Markdown in** ****non-standard LaTeX syntax** — designed for web display, not local Markdown engines.
+Obsidian (and many static site generators) rely on** ** **MathJax** , which expects** **`$...$` and** **`$$...$$` delimiters.
+
+This script bridges that formatting gap — enabling a** ****smooth copy-paste workflow** from AI tools to your personal knowledge system.
+
+---
+
+## 🤝 Contributing
+
+Pull requests and issues are welcome!
+Some future improvements:
+
+* Detect block environments (`align`,** **`cases`) more elegantly.
+* Add support for Windows auto-clipboard flow.
+* Possible Chrome based browser extension for one-click copy directly in the browser.
+* Add GUI toggle for “inline-only” vs “block-only” mode.
+* Future plans to include in-text copy from chatGPT, so you do not have to copy the entire output.
+
+---
+
+## 🪪 License
+
+MIT License © 2025 Saatvik Agrawal
+Use freely, modify boldly, attribute kindly.
