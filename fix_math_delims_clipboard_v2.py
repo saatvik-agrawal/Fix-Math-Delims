@@ -65,8 +65,8 @@ def looks_like_latex(s: str) -> bool:
 def looks_like_mathish(s: str) -> bool:
     if LATEX_TOKENS_RE.search(s): return True
     if MATHISH_OP_RE.search(s):   return True
-    if re.search(r"\b[A-Za-z]\s*\(", s): return True
-    if re.search(r"\b[dD][A-Za-z]+\b", s): return True
+    if re.search(r"\b[A-Za-z]\s*\(", s): return True      # f(x), T(x,y)
+    if re.search(r"\b[dD][A-Za-z]+\b", s): return True    # dx, dT, dP...
     if len(s) > 140: return False
     return False
 
@@ -146,23 +146,49 @@ def protect_outer_math_parens(text: str, sent: List[str]) -> str:
 
 # ---------- inline conversions ----------
 def convert_token_paren_numeric(text: str) -> str:
+    # Wrap 2(1), 3(0), x(1), T(x,y) as one inline math run.
     patt = re.compile(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=.:;\\]+?)\s*\)")
     return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
 
 def convert_inline_parentheses(text: str) -> str:
     ALLOW_EXACT = {"x","y","z","T","v","u"}
-    def repl(m: Match[str]) -> str:
-        inner = m.group(1).strip()
-        if "\n" in inner or "[" in inner or "]" in inner: return m.group(0)
-        if "$" in inner:  # prevent nested-dollar artifacts
-            return m.group(0)
+
+    # v4.2 stricter check: require real math signals, digits, function call, or d-variables.
+    def is_inline_math_candidate(inner: str) -> bool:
+        if looks_like_latex(inner):  # \frac, \nabla, \alpha, ...
+            return True
+        # strong math operators / relations (exclude a plain hyphen-only prose trigger)
+        if any(ch in inner for ch in "=+*/^_"):
+            return True
+        # digits anywhere -> likely a math eval, coordinates, etc.
+        if re.search(r"\d", inner):
+            return True
+        # function call like f(x) or T(x,y)
+        if re.search(r"^[A-Za-z]\s*\([^()\n]*\)$", inner):
+            return True
+        # standalone variable or d-something like dx, dT
         if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):
-            return f"${inner}$"
-        if looks_like_latex(inner) or looks_like_mathish(inner) or re.match(r"^[A-Za-z0-9,;:+\-*/^_=.\s]+$", inner):
-            if SIMPLE_WORD_RE.match(inner):
-                return m.group(0)
-            return f"${inner}$"
+            return True
+        return False
+
+    def repl(m: Match[str]) -> str:
+        inner = m.group(1)
+        if "\n" in inner or "[" in inner or "]" in inner:
+            return m.group(0)
+        if "$" in inner:
+            return m.group(0)
+
+        inner_stripped = inner.strip()
+        if inner_stripped in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner_stripped):
+            return f"${inner_stripped}$"
+
+        if is_inline_math_candidate(inner_stripped):
+            return f"${inner_stripped}$"
+
+        # otherwise, leave normal prose parentheses alone
         return m.group(0)
+
+    # ((x+y)) -> $ (x+y) $
     text = re.sub(r"\(\(([^()\r\n]{1,160})\)\)", lambda m: f"$({m.group(1).strip()})$", text)
     return re.sub(r"\(([^()\r\n]{1,160})\)", repl, text)
 
@@ -177,6 +203,7 @@ def _fix_matrix_rows(env_body: str) -> str:
         line = raw.rstrip()
         if not line:
             rows_out.append(line); continue
+        # move trailing [3pt] into a proper \\[3pt]
         m = re.match(r"^(.*?)(?<!\\)\[\s*(\d+pt)\s*\]\s*$", line)
         if m:
             core = m.group(1).rstrip()
@@ -202,17 +229,31 @@ def fix_matrices_in_math_blocks(text: str) -> str:
         return f"$${inner}$$"
     return MATH_BLOCK_RE.sub(repl_math, text)
 
-# ---------- spacing & normalization ----------
+# ---------- spacing & normalization (v4.2) ----------
 def fix_inline_spacing(text: str) -> str:
+    # 0) Strip inner spaces immediately inside inline math: $ x $ -> $x$
+    text = re.sub(r"\$(\s*)([^$]*?)(\s*)\$", r"$\2$", text)
+
+    # 1) Ensure a space before $ when attached to a word/number: word$ -> word $
     text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
+
+    # 2) Ensure a space after $math$ when followed by a word/number: $x$word -> $x$ word
     text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)
+
+    # 3) Collapse any remaining inner spaces around math content (safety)
     text = re.sub(r"\$\s+([^\$]*?)\s+\$", r"$\1$", text)
-    text = re.sub(r"^-\s*\$\s*([^\$]*?)\s*\$", r"- $\1$", text, flags=re.MULTILINE)
+
+    # 4) Remove a space before punctuation after inline math: $x$ , -> $x$,
+    text = re.sub(r"\$\s+([,.;:!?])", r"$\1", text)
+
+    # 5) Normalize spaces around inline math only when surrounded by spaces
     text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)
+
     return text
 
 def normalize_dollars(text: str) -> str:
     text = re.sub(r"\${3,}", "$$", text)
+    # one-line $$...$$ normalization
     text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)
     return text
 
