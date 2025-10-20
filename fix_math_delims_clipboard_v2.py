@@ -87,17 +87,17 @@ def convert_backslash_brackets(text: str) -> str:
     return text
 
 def convert_square_bracket_blocks(text: str) -> str:
-    # Paragraph-level [ ... ] with at least one newline inside -> $$ ... $$.
     patt = re.compile(r"^[ \t]*\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\][ \t]*$", re.MULTILINE)
     return patt.sub(lambda m: f"\n$$\n{m.group(1).strip()}\n$$\n", text)
 
+def convert_token_paren_numeric(text: str) -> str:
+    # Wrap 2(1), 3(0), x(1), T(x,y) as **one** inline math run.
+    patt = re.compile(
+        r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=.:;\\]+?)\s*\)"
+    )
+    return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
+
 def convert_inline_parentheses(text: str) -> str:
-    """
-    Convert ( ... ) to $...$ when math-like.
-    - ALWAYS allow (dx), (dy), (dz), (dT), (dV), (dP), and single-letter vars: (x),(y),(z),(T).
-    - Allow tuples: (x,y,z), numeric parens: (1), (2x), etc.
-    - Skip plain words like (however).
-    """
     ALLOW_EXACT = {"x","y","z","T","v","u"}
     def repl(m: Match[str]) -> str:
         inner = m.group(1).strip()
@@ -105,38 +105,29 @@ def convert_inline_parentheses(text: str) -> str:
         if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):  # (dx), (dT)
             return f"${inner}$"
         if looks_like_latex(inner) or looks_like_mathish(inner) or re.match(r"^[A-Za-z0-9,;:+\-*/^_=.\s]+$", inner):
-            if SIMPLE_WORD_RE.match(inner):  # single plain word -> skip
+            if SIMPLE_WORD_RE.match(inner):  # plain word
                 return m.group(0)
             return f"${inner}$"
         return m.group(0)
-    # Double parens first
     text = re.sub(r"\(\(([^()\r\n]{1,160})\)\)", lambda m: f"$({m.group(1).strip()})$", text)
     return re.sub(r"\(([^()\r\n]{1,160})\)", repl, text)
 
-def convert_token_paren_numeric(text: str) -> str:
-    """
-    Wrap patterns like 2(1), 3(0), x(1), T(x,y) safely as one inline math token,
-    but do NOT touch if we're inside $$...$$ (already protected earlier).
-    """
-    patt = re.compile(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=]{1,80})\s*\)")
-    return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
-
 def fix_inline_spacing(text: str) -> str:
-    # 1) Ensure space BEFORE a $ when stuck to a word/number: word$math$ -> word $math$
+    # Ensure space BEFORE: word$math$ -> word $math$
     text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
-    # 2) Ensure space AFTER a $ when stuck to a word/number: $math$word -> $math$ word
+    # Ensure space AFTER: $math$word -> $math$ word
     text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)
-    # 3) List dash: "-$x$" -> "- $x$"
-    text = re.sub(r"^-\s*\$", r"- $", text, flags=re.MULTILINE)
-    # 4) Trim spaces inside inline math: "$ T $" -> "$T$"
+    # Trim spaces INSIDE: "$ T $" -> "$T$"
     text = re.sub(r"\$\s+([^\$]*?)\s+\$", r"$\1$", text)
-    # 5) Collapse excessive spaces around inline math
+    # List dash: "-$x$" or "-$ x $" -> "- $x$"
+    text = re.sub(r"^-\s*\$\s*([^\$]*?)\s*\$", r"- $\1$", text, flags=re.MULTILINE)
+    # Collapse multiple spaces around inline math
     text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)
     return text
 
 def normalize_dollars(text: str) -> str:
-    text = re.sub(r"\${3,}", "$$", text)                           # $$$ -> $$
-    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text) # one-line display
+    text = re.sub(r"\${3,}", "$$", text)
+    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)
     return text
 
 def convert(text: str) -> str:
@@ -148,10 +139,10 @@ def convert(text: str) -> str:
     protected = convert_square_bracket_blocks(protected)
     # 3) protect new $$...$$
     protected = _protect_math(protected, sent)
-    # 4) inline conversions outside math/code
-    protected = convert_inline_parentheses(protected)     # (dx), (x,y), (T) …
+    # 4) inline conversions (ORDER matters)
     protected = convert_token_paren_numeric(protected)    # 2(1), 3(0), T(x,y) …
-    protected = fix_inline_spacing(protected)             # spacing around/inside $...$
+    protected = convert_inline_parentheses(protected)     # (dx), (x,y), (T) …
+    protected = fix_inline_spacing(protected)             # spacing cleanup
     protected = normalize_dollars(protected)
     # 5) restore
     return _unprotect(protected, sent)

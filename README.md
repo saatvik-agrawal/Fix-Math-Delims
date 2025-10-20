@@ -105,3 +105,15 @@ osascript -e 'tell application "System Events" to keystroke "v" using command do
 * `2(1)+3(0)` stays intact as** ****one** math run:** **`$2(1)+3(0)$` (no** **`2 $1$`).
 * Spacing:** **`So$ T $depends` →** **`So $T$ depends`;** **`-$ x $` →** **`- $x$`.
 * The** **`[ … ]` blocks remain clean** **`$$ … $$` and protected; don’t touch inside.
+
+
+### V3.5
+
+
+* **(ORDER fixed)** —** **`2(1)` →** **`$2(1)$` instead of** **`2 $1$`.
+* **(dx)** , (dy), (dz), (T) →** **`$dx$`,** **`$dy$`,** **`$dz$`,** **`$T$`.
+* **Spacing fixed:**
+  * `So$ T $depends` →** **`So $T$ depends`.
+  * `-$ x $:` →** **`- $x$:`.
+* **Blocks** **`[ ... ]`** stay** **`$$ ... $$` untouched.
+* Works directly with** ****clipboard input/output** — ideal for aText hotkey workflow.
