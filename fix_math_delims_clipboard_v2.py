@@ -44,7 +44,6 @@ def _protect(text: str) -> Tuple[str, List[str]]:
     return text, sent
 
 def _protect_math(text: str, sent: List[str]) -> str:
-    # protect $$...$$ (display math)
     return DOLLAR_BLOCK_RE.sub(lambda m: (sent.append(m.group(0)) or f"@@MATH_{len(sent)-1}@@"), text)
 
 def _unprotect(text: str, sent: List[str]) -> str:
@@ -66,8 +65,8 @@ def looks_like_latex(s: str) -> bool:
 def looks_like_mathish(s: str) -> bool:
     if LATEX_TOKENS_RE.search(s): return True
     if MATHISH_OP_RE.search(s):   return True
-    if re.search(r"\b[A-Za-z]\s*\(", s): return True      # f(x), T(x,y)
-    if re.search(r"\b[dD][A-Za-z]+\b", s): return True    # dx, dT, dP...
+    if re.search(r"\b[A-Za-z]\s*\(", s): return True
+    if re.search(r"\b[dD][A-Za-z]+\b", s): return True
     if len(s) > 140: return False
     return False
 
@@ -91,39 +90,62 @@ def convert_square_bracket_blocks(text: str) -> str:
     patt = re.compile(r"^[ \t]*\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\][ \t]*$", re.MULTILINE)
     return patt.sub(lambda m: f"\n$$\n{m.group(1).strip()}\n$$\n", text)
 
-# NEW: wrap *outer* math parentheses into inline math, then protect them
-OUTER_PAREN_RE = re.compile(r"\(([^()\n]{1,220})\)")
-
+# ---------- stack-based outer math parentheses ----------
 def protect_outer_math_parens(text: str, sent: List[str]) -> str:
-    def is_outer_math(inner: str) -> bool:
-        if "$" in inner: return False  # already has math
-        inner_stripped = inner.strip()
-        # Heuristic: bigger expressions that look like math-y statements
-        if len(inner_stripped) >= 5 and (MATHISH_OP_RE.search(inner_stripped) or looks_like_latex(inner_stripped)):
-            return True
-        # e.g., dT=..., T(x,y) with ops
-        return False
-    out = []
-    i = 0
-    while i < len(text):
-        m = OUTER_PAREN_RE.search(text, i)
-        if not m:
-            out.append(text[i:]); break
-        # copy prefix
-        out.append(text[i:m.start()])
-        inner = m.group(1)
-        if is_outer_math(inner):
-            # protect as inline math so later passes don't touch inside
-            token = f"@@INL_{len(sent)}@@"
-            sent.append(f"${inner.strip()}$")
-            out.append(token)
-        else:
-            out.append(m.group(0))
-        i = m.end()
-    return "".join(out)
+    s = text
+    stack = []
+    pairs = []  # (start, end)
+    for i, ch in enumerate(s):
+        if ch == '(':
+            stack.append(i)
+        elif ch == ')' and stack:
+            start = stack.pop()
+            pairs.append((start, i))
+    if not pairs:
+        return text
 
+    def is_math_outer(content: str) -> bool:
+        if '$' in content:
+            return False
+        c = content.strip()
+        if len(c) < 5:
+            return False
+        if MATHISH_OP_RE.search(c) or looks_like_latex(c):
+            return True
+        return False
+
+    candidates = []
+    for (a, b) in pairs:
+        inner = s[a+1:b]
+        if is_math_outer(inner):
+            candidates.append((a, b))
+
+    if not candidates:
+        return text
+
+    candidates.sort(key=lambda t: (t[0], -t[1]))
+    selected = []
+    for a, b in candidates:
+        if any(pa <= a and b <= pb for (pa, pb) in selected):
+            continue
+        selected.append((a, b))
+
+    result_parts = []
+    pos = 0
+    for a, b in sorted(selected, key=lambda t: t[0]):
+        if a < pos:
+            continue
+        result_parts.append(s[pos:a])
+        inner = s[a+1:b].strip()
+        token = f"@@INL_{len(sent)}@@"
+        sent.append(f"${inner}$")
+        result_parts.append(token)
+        pos = b + 1
+    result_parts.append(s[pos:])
+    return "".join(result_parts)
+
+# ---------- inline conversions ----------
 def convert_token_paren_numeric(text: str) -> str:
-    # Wrap 2(1), 3(0), x(1), T(x,y) as one inline math run.
     patt = re.compile(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=.:;\\]+?)\s*\)")
     return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
 
@@ -134,17 +156,17 @@ def convert_inline_parentheses(text: str) -> str:
         if "\n" in inner or "[" in inner or "]" in inner: return m.group(0)
         if "$" in inner:  # prevent nested-dollar artifacts
             return m.group(0)
-        if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):     # (dx), (dT)
+        if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):
             return f"${inner}$"
         if looks_like_latex(inner) or looks_like_mathish(inner) or re.match(r"^[A-Za-z0-9,;:+\-*/^_=.\s]+$", inner):
-            if SIMPLE_WORD_RE.match(inner):  # simple word like (however)
+            if SIMPLE_WORD_RE.match(inner):
                 return m.group(0)
             return f"${inner}$"
         return m.group(0)
     text = re.sub(r"\(\(([^()\r\n]{1,160})\)\)", lambda m: f"$({m.group(1).strip()})$", text)
     return re.sub(r"\(([^()\r\n]{1,160})\)", repl, text)
 
-# ---------- matrix fixes inside $$...$$ ----------
+# ---------- matrix fixes ----------
 MATH_BLOCK_RE  = re.compile(r"\$\$([\s\S]*?)\$\$", re.MULTILINE)
 MATRIX_ENV_RE  = re.compile(r"\\begin\{(bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|matrix)\}([\s\S]*?)\\end\{\1\}", re.MULTILINE)
 
@@ -182,37 +204,31 @@ def fix_matrices_in_math_blocks(text: str) -> str:
 
 # ---------- spacing & normalization ----------
 def fix_inline_spacing(text: str) -> str:
-    text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)             # word$ -> word $
-    text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)         # $math$word -> $math$ word
-    text = re.sub(r"\$\s+([^\$]*?)\s+\$", r"$\1$", text)                 # $ T $ -> $T$
+    text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
+    text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)
+    text = re.sub(r"\$\s+([^\$]*?)\s+\$", r"$\1$", text)
     text = re.sub(r"^-\s*\$\s*([^\$]*?)\s*\$", r"- $\1$", text, flags=re.MULTILINE)
     text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)
     return text
 
 def normalize_dollars(text: str) -> str:
     text = re.sub(r"\${3,}", "$$", text)
-    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)      # one-line display
+    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)
     return text
 
+# ---------- master pipeline ----------
 def convert(text: str) -> str:
-    # 1) protect code
     protected, sent = _protect(text)
-    # 2) blocks first
     protected = convert_code_fences(protected)
     protected = convert_backslash_brackets(protected)
     protected = convert_square_bracket_blocks(protected)
-    # 3) matrix fixes inside $$...$$ (before protecting math)
     protected = fix_matrices_in_math_blocks(protected)
-    # 4) PROTECT outer math parentheses as inline math BEFORE any other inline edits
     protected = protect_outer_math_parens(protected, sent)
-    # 5) protect $$...$$ so inline steps don't touch
     protected = _protect_math(protected, sent)
-    # 6) inline conversions (ORDER matters)
-    protected = convert_token_paren_numeric(protected)    # 2(1), 3(0), T(x,y) …
-    protected = convert_inline_parentheses(protected)     # (dx), (x,y), (T) …
+    protected = convert_token_paren_numeric(protected)
+    protected = convert_inline_parentheses(protected)
     protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
-    # 7) restore all placeholders
     return _unprotect(protected, sent)
 
 def main():
