@@ -87,28 +87,42 @@ def convert_backslash_brackets(text: str) -> str:
     return text
 
 def convert_square_bracket_blocks(text: str) -> str:
+    # Paragraph-level [ ... ] with at least one newline inside -> $$ ... $$.
     patt = re.compile(r"^[ \t]*\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\][ \t]*$", re.MULTILINE)
     return patt.sub(lambda m: f"\n$$\n{m.group(1).strip()}\n$$\n", text)
 
 def convert_token_paren_numeric(text: str) -> str:
-    # Wrap 2(1), 3(0), x(1), T(x,y) as **one** inline math run.
+    """
+    Wrap 2(1), 3(0), x(1), T(x,y) as **one** inline math run.
+    Runs BEFORE generic parenthesis handler.
+    """
     patt = re.compile(
         r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=.:;\\]+?)\s*\)"
     )
     return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
 
 def convert_inline_parentheses(text: str) -> str:
+    """
+    Convert ( ... ) to $...$ when math-like.
+    - ALWAYS allow (dx), (dy), (dz), (dT) … and single vars: (x),(y),(z),(T).
+    - Allow tuples (x,y,z), numeric parens (1), (2x), etc.
+    - Skip plain words like (however).
+    - NEW: if inner already contains '$', DO NOT wrap (prevents $2$1$$ artifacts).
+    """
     ALLOW_EXACT = {"x","y","z","T","v","u"}
     def repl(m: Match[str]) -> str:
         inner = m.group(1).strip()
         if "\n" in inner or "[" in inner or "]" in inner: return m.group(0)
+        if "$" in inner:  # critical guard against nested-dollar collisions
+            return m.group(0)
         if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):  # (dx), (dT)
             return f"${inner}$"
         if looks_like_latex(inner) or looks_like_mathish(inner) or re.match(r"^[A-Za-z0-9,;:+\-*/^_=.\s]+$", inner):
-            if SIMPLE_WORD_RE.match(inner):  # plain word
+            if SIMPLE_WORD_RE.match(inner):  # single plain word -> leave
                 return m.group(0)
             return f"${inner}$"
         return m.group(0)
+    # Double parens first
     text = re.sub(r"\(\(([^()\r\n]{1,160})\)\)", lambda m: f"$({m.group(1).strip()})$", text)
     return re.sub(r"\(([^()\r\n]{1,160})\)", repl, text)
 
@@ -126,8 +140,8 @@ def fix_inline_spacing(text: str) -> str:
     return text
 
 def normalize_dollars(text: str) -> str:
-    text = re.sub(r"\${3,}", "$$", text)
-    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)
+    text = re.sub(r"\${3,}", "$$", text)                           # $$$ -> $$
+    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text) # single-line display
     return text
 
 def convert(text: str) -> str:
