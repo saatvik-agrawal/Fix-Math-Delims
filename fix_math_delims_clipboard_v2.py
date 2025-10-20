@@ -65,8 +65,8 @@ def looks_like_latex(s: str) -> bool:
 def looks_like_mathish(s: str) -> bool:
     if LATEX_TOKENS_RE.search(s): return True
     if MATHISH_OP_RE.search(s):   return True
-    if re.search(r"\b[A-Za-z]\s*\(", s): return True      # f(x), T(x,y)
-    if re.search(r"\b[dD][A-Za-z]+\b", s): return True    # dx, dT, dP...
+    if re.search(r"\b[A-Za-z]\s*\(", s): return True
+    if re.search(r"\b[dD][A-Za-z]+\b", s): return True
     if len(s) > 140: return False
     return False
 
@@ -87,12 +87,10 @@ def convert_backslash_brackets(text: str) -> str:
     return text
 
 def convert_square_bracket_blocks(text: str) -> str:
-    # Paragraph-level [ ... ] with at least one newline inside -> $$ ... $$.
     patt = re.compile(r"^[ \t]*\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\][ \t]*$", re.MULTILINE)
     return patt.sub(lambda m: f"\n$$\n{m.group(1).strip()}\n$$\n", text)
 
 def convert_token_paren_numeric(text: str) -> str:
-    # Wrap 2(1), 3(0), x(1), T(x,y) as one inline math run.
     patt = re.compile(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=.:;\\]+?)\s*\)")
     return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
 
@@ -103,10 +101,10 @@ def convert_inline_parentheses(text: str) -> str:
         if "\n" in inner or "[" in inner or "]" in inner: return m.group(0)
         if "$" in inner:  # prevent nested-dollar artifacts
             return m.group(0)
-        if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):  # (dx), (dT)
+        if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):
             return f"${inner}$"
         if looks_like_latex(inner) or looks_like_mathish(inner) or re.match(r"^[A-Za-z0-9,;:+\-*/^_=.\s]+$", inner):
-            if SIMPLE_WORD_RE.match(inner):  # plain word
+            if SIMPLE_WORD_RE.match(inner):
                 return m.group(0)
             return f"${inner}$"
         return m.group(0)
@@ -118,27 +116,32 @@ MATH_BLOCK_RE = re.compile(r"\$\$([\s\S]*?)\$\$", re.MULTILINE)
 MATRIX_ENV_RE = re.compile(r"\\begin\{(bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|matrix)\}([\s\S]*?)\\end\{\1\}", re.MULTILINE)
 
 def _fix_matrix_rows(env_body: str) -> str:
-    lines = env_body.strip("\n").splitlines()
-    # Normalize [Npt] -> \\[Npt] on each line
-    for i, line in enumerate(lines):
-        lines[i] = re.sub(r"(?<!\\)\[(\d+pt)\]", r"\\[\1]", line.rstrip())
-
-    # Add \\ between consecutive non-empty lines when missing
-    fixed = []
-    for i, line in enumerate(lines):
-        cur = line.rstrip()
-        fixed.append(cur)
-        last = (i == len(lines) - 1)
-        if last: break
-        nxt = lines[i+1].lstrip()
-        if not nxt:  # blank next line: no break
+    # Work line-by-line, append required row breaks **in-line** (no separate "\\" lines).
+    rows_in  = env_body.strip("\n").splitlines()
+    rows_out: List[str] = []
+    for i, raw in enumerate(rows_in):
+        line = raw.rstrip()
+        if not line:
+            rows_out.append(line)
             continue
-        # if current already ends with \\ or \\[Npt] or has trailing & (common row pattern), leave it
-        if re.search(r"(\\\\(\[\d+pt\])?\s*|&\s*)$", cur):
-            continue
-        # otherwise insert a row break line
-        fixed.append(r"\\")
-    return "\n".join(fixed)
+        # Extract optional [Npt] at end of line (unescaped)
+        m = re.match(r"^(.*?)(?<!\\)\[\s*(\d+pt)\s*\]\s*$", line)
+        if m:
+            core = m.group(1).rstrip()
+            pt   = m.group(2)
+            # If core already ends with \\ or \\[...], don't double it; just normalize to \\[Npt]
+            if re.search(r"\\\\(\[\d+pt\])?\s*$", core):
+                core = re.sub(r"\\\\(\[\d+pt\])?\s*$", r"\\", core)  # one row break only
+            rows_out.append(f"{core}\\\\[{pt}]")
+        else:
+            # If already has a row break or '&' alignment at end, keep as-is
+            if re.search(r"(\\\\(\[\d+pt\])?\s*|&\s*)$", line):
+                rows_out.append(line)
+            else:
+                # Add \\ to all but the last non-empty row
+                is_last_nonempty = all(not r.strip() for r in rows_in[i+1:])
+                rows_out.append(line if is_last_nonempty else f"{line}\\\\")
+    return "\n".join(rows_out)
 
 def fix_matrices_in_math_blocks(text: str) -> str:
     def fix_env(m: Match[str]) -> str:
@@ -152,35 +155,32 @@ def fix_matrices_in_math_blocks(text: str) -> str:
 
 # ---------- spacing & normalization ----------
 def fix_inline_spacing(text: str) -> str:
-    text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)             # word$ -> word $
-    text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)         # $math$word -> $math$ word
-    text = re.sub(r"\$\s+([^\$]*?)\s+\$", r"$\1$", text)                 # $ T $ -> $T$
-    text = re.sub(r"^-\s*\$\s*([^\$]*?)\s*\$", r"- $\1$", text, flags=re.MULTILINE)  # -$x$ -> - $x$
-    text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)                   # collapse around inline
+    text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
+    text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)
+    text = re.sub(r"\$\s+([^\$]*?)\s+\$", r"$\1$", text)
+    text = re.sub(r"^-\s*\$\s*([^\$]*?)\s*\$", r"- $\1$", text, flags=re.MULTILINE)
+    text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)
     return text
 
 def normalize_dollars(text: str) -> str:
     text = re.sub(r"\${3,}", "$$", text)
-    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)      # one-line display
+    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)
     return text
 
 def convert(text: str) -> str:
-    # 1) protect code
     protected, sent = _protect(text)
-    # 2) blocks first
     protected = convert_code_fences(protected)
     protected = convert_backslash_brackets(protected)
     protected = convert_square_bracket_blocks(protected)
-    # 3) matrix fixes INSIDE $$...$$ (before protecting math)
+    # matrix fixes INSIDE $$...$$ before protecting math
     protected = fix_matrices_in_math_blocks(protected)
-    # 4) protect $$...$$ so inline steps don't touch
+    # protect math
     protected = _protect_math(protected, sent)
-    # 5) inline conversions (ORDER matters)
-    protected = convert_token_paren_numeric(protected)    # 2(1), 3(0), T(x,y)
-    protected = convert_inline_parentheses(protected)     # (dx), (x,y), (T)
+    # inline conversions
+    protected = convert_token_paren_numeric(protected)
+    protected = convert_inline_parentheses(protected)
     protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
-    # 6) restore
     return _unprotect(protected, sent)
 
 def main():
