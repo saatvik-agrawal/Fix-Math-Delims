@@ -90,3 +90,18 @@ osascript -e 'tell application "System Events" to keystroke "v" using command do
 * Fixed the** ** **spacing bug** :** **`"$([^$]+)\$([A-Za-z0-9])" -> "$\\1$ \\2"` so the math content is preserved.
 * Kept conservative inline conversion:** **`(dx)`,** **`(dT)`,** **`(x,y,z)`,** **`(\nabla T)` →** **`$dx$`,** **`$dT$`,** **`$x,y,z$`,** **`$\nabla T$`.
 * Converts paragraph** ****`[ … ]`** blocks →** **`$$ … $$` and** ****protects** them so no later edits occur inside.
+
+### V3.4
+
+##### Remaining Problems
+
+* **Single-word parens weren’t converted** —** **`(dx)`,** **`(dy)`,** **`(dz)`,** **`(T)` stayed literal because the “skip plain words” guard was too strict.
+* **`2(1)+3(0)` split into** **`2 $1$ + 3 $0$`** — we need a safe “token+paren” rule for cases like** **`a(…)` and digits followed by parens.
+* **Spacing around inline math** — things like** **`So$ T $depends`,** **`-$ x $`, and** **`$ T $` should become** **`So $T$ depends`,** **`- $x$`, and** **`$T$`.
+
+##### Fixes
+
+* `(dx) (dy) (dz) (T)` →** **`$dx$`,** **`$dy$`,** **`$dz$`,** **`$T$`.
+* `2(1)+3(0)` stays intact as** ****one** math run:** **`$2(1)+3(0)$` (no** **`2 $1$`).
+* Spacing:** **`So$ T $depends` →** **`So $T$ depends`;** **`-$ x $` →** **`- $x$`.
+* The** **`[ … ]` blocks remain clean** **`$$ … $$` and protected; don’t touch inside.
