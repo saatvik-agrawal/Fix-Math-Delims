@@ -92,56 +92,76 @@ def convert_square_bracket_blocks(text: str) -> str:
     return patt.sub(lambda m: f"\n$$\n{m.group(1).strip()}\n$$\n", text)
 
 def convert_token_paren_numeric(text: str) -> str:
-    """
-    Wrap 2(1), 3(0), x(1), T(x,y) as **one** inline math run.
-    Runs BEFORE generic parenthesis handler.
-    """
-    patt = re.compile(
-        r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=.:;\\]+?)\s*\)"
-    )
+    # Wrap 2(1), 3(0), x(1), T(x,y) as one inline math run.
+    patt = re.compile(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=.:;\\]+?)\s*\)")
     return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
 
 def convert_inline_parentheses(text: str) -> str:
-    """
-    Convert ( ... ) to $...$ when math-like.
-    - ALWAYS allow (dx), (dy), (dz), (dT) … and single vars: (x),(y),(z),(T).
-    - Allow tuples (x,y,z), numeric parens (1), (2x), etc.
-    - Skip plain words like (however).
-    - NEW: if inner already contains '$', DO NOT wrap (prevents $2$1$$ artifacts).
-    """
     ALLOW_EXACT = {"x","y","z","T","v","u"}
     def repl(m: Match[str]) -> str:
         inner = m.group(1).strip()
         if "\n" in inner or "[" in inner or "]" in inner: return m.group(0)
-        if "$" in inner:  # critical guard against nested-dollar collisions
+        if "$" in inner:  # prevent nested-dollar artifacts
             return m.group(0)
         if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):  # (dx), (dT)
             return f"${inner}$"
         if looks_like_latex(inner) or looks_like_mathish(inner) or re.match(r"^[A-Za-z0-9,;:+\-*/^_=.\s]+$", inner):
-            if SIMPLE_WORD_RE.match(inner):  # single plain word -> leave
+            if SIMPLE_WORD_RE.match(inner):  # plain word
                 return m.group(0)
             return f"${inner}$"
         return m.group(0)
-    # Double parens first
     text = re.sub(r"\(\(([^()\r\n]{1,160})\)\)", lambda m: f"$({m.group(1).strip()})$", text)
     return re.sub(r"\(([^()\r\n]{1,160})\)", repl, text)
 
+# ---------- matrix fixes inside $$...$$ ----------
+MATH_BLOCK_RE = re.compile(r"\$\$([\s\S]*?)\$\$", re.MULTILINE)
+MATRIX_ENV_RE = re.compile(r"\\begin\{(bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|matrix)\}([\s\S]*?)\\end\{\1\}", re.MULTILINE)
+
+def _fix_matrix_rows(env_body: str) -> str:
+    lines = env_body.strip("\n").splitlines()
+    # Normalize [Npt] -> \\[Npt] on each line
+    for i, line in enumerate(lines):
+        lines[i] = re.sub(r"(?<!\\)\[(\d+pt)\]", r"\\[\1]", line.rstrip())
+
+    # Add \\ between consecutive non-empty lines when missing
+    fixed = []
+    for i, line in enumerate(lines):
+        cur = line.rstrip()
+        fixed.append(cur)
+        last = (i == len(lines) - 1)
+        if last: break
+        nxt = lines[i+1].lstrip()
+        if not nxt:  # blank next line: no break
+            continue
+        # if current already ends with \\ or \\[Npt] or has trailing & (common row pattern), leave it
+        if re.search(r"(\\\\(\[\d+pt\])?\s*|&\s*)$", cur):
+            continue
+        # otherwise insert a row break line
+        fixed.append(r"\\")
+    return "\n".join(fixed)
+
+def fix_matrices_in_math_blocks(text: str) -> str:
+    def fix_env(m: Match[str]) -> str:
+        env, body = m.group(1), m.group(2)
+        return f"\\begin{{{env}}}\n{_fix_matrix_rows(body)}\n\\end{{{env}}}"
+    def repl_math(m: Match[str]) -> str:
+        inner = m.group(1)
+        inner = MATRIX_ENV_RE.sub(fix_env, inner)
+        return f"$${inner}$$"
+    return MATH_BLOCK_RE.sub(repl_math, text)
+
+# ---------- spacing & normalization ----------
 def fix_inline_spacing(text: str) -> str:
-    # Ensure space BEFORE: word$math$ -> word $math$
-    text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
-    # Ensure space AFTER: $math$word -> $math$ word
-    text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)
-    # Trim spaces INSIDE: "$ T $" -> "$T$"
-    text = re.sub(r"\$\s+([^\$]*?)\s+\$", r"$\1$", text)
-    # List dash: "-$x$" or "-$ x $" -> "- $x$"
-    text = re.sub(r"^-\s*\$\s*([^\$]*?)\s*\$", r"- $\1$", text, flags=re.MULTILINE)
-    # Collapse multiple spaces around inline math
-    text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)
+    text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)             # word$ -> word $
+    text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)         # $math$word -> $math$ word
+    text = re.sub(r"\$\s+([^\$]*?)\s+\$", r"$\1$", text)                 # $ T $ -> $T$
+    text = re.sub(r"^-\s*\$\s*([^\$]*?)\s*\$", r"- $\1$", text, flags=re.MULTILINE)  # -$x$ -> - $x$
+    text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)                   # collapse around inline
     return text
 
 def normalize_dollars(text: str) -> str:
-    text = re.sub(r"\${3,}", "$$", text)                           # $$$ -> $$
-    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text) # single-line display
+    text = re.sub(r"\${3,}", "$$", text)
+    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)      # one-line display
     return text
 
 def convert(text: str) -> str:
@@ -151,21 +171,24 @@ def convert(text: str) -> str:
     protected = convert_code_fences(protected)
     protected = convert_backslash_brackets(protected)
     protected = convert_square_bracket_blocks(protected)
-    # 3) protect new $$...$$
+    # 3) matrix fixes INSIDE $$...$$ (before protecting math)
+    protected = fix_matrices_in_math_blocks(protected)
+    # 4) protect $$...$$ so inline steps don't touch
     protected = _protect_math(protected, sent)
-    # 4) inline conversions (ORDER matters)
-    protected = convert_token_paren_numeric(protected)    # 2(1), 3(0), T(x,y) …
-    protected = convert_inline_parentheses(protected)     # (dx), (x,y), (T) …
-    protected = fix_inline_spacing(protected)             # spacing cleanup
+    # 5) inline conversions (ORDER matters)
+    protected = convert_token_paren_numeric(protected)    # 2(1), 3(0), T(x,y)
+    protected = convert_inline_parentheses(protected)     # (dx), (x,y), (T)
+    protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
-    # 5) restore
+    # 6) restore
     return _unprotect(protected, sent)
 
 def main():
     src = get_clipboard() or sys.stdin.read()
     out = convert(src)
     set_clipboard(out)
-    sys.stdout.write(out)
+    # do NOT print (prevents aText double-insert)
+    # sys.stdout.write(out)
 
 if __name__ == "__main__":
     main()
