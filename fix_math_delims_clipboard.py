@@ -2,32 +2,59 @@
 import os, re, sys, shutil, subprocess
 from typing import Optional, Match, List, Tuple
 
+"""
+Fix-Math-Delims — v4.8.3
+
+Converts ChatGPT-style math snippets into Obsidian-friendly Markdown/LaTeX.
+
+- \[ ... ]  -> $$ ... $$
+- \( ... )  -> $ ... $
+- [  block  ] (on own lines) -> $$ block $$
+- Parenthesized math like (dT), (X^T X) -> inline $dT$, $X^T X$
+- Matrix/cases environments: enforces proper row breaks (single "\" -> "\\")
+- Preserves code fences/inline code and pre-existing $$...$$
+- Keeps Markdown lists intact and stabilizes bullet markers
+- Cleans spacing around inline $...$ (no "$ x$", "x $", "amount$dT$" etc.)
+"""
+
+
 # ---------- clipboard helpers ----------
 def _run(cmd: list, input_text: Optional[str] = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd,
         input=input_text.encode("utf-8") if input_text is not None else None,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
     )
 
 def get_clipboard() -> str:
     if sys.platform == "darwin":
         return _run(["pbpaste"]).stdout.decode("utf-8", errors="ignore")
     elif os.name == "nt":
-        return _run(["powershell","-NoProfile","-Command","Get-Clipboard"]).stdout.decode("utf-8", errors="ignore")
+        return _run(["powershell", "-NoProfile", "-Command", "Get-Clipboard"]).stdout.decode("utf-8", errors="ignore")
     else:
-        if shutil.which("xclip"):  return _run(["xclip","-selection","clipboard","-o"]).stdout.decode("utf-8","ignore")
-        if shutil.which("xsel"):   return _run(["xsel","--clipboard","--output"]).stdout.decode("utf-8","ignore")
+        if shutil.which("xclip"):
+            return _run(["xclip", "-selection", "clipboard", "-o"]).stdout.decode("utf-8", "ignore")
+        if shutil.which("xsel"):
+            return _run(["xsel", "--clipboard", "--output"]).stdout.decode("utf-8", "ignore")
         return sys.stdin.read()
 
 def set_clipboard(text: str) -> None:
     if sys.platform == "darwin":
         _run(["pbcopy"], input_text=text)
     elif os.name == "nt":
-        _run(["powershell","-NoProfile","-Command","Set-Clipboard -Value ([Console]::In.ReadToEnd())"], input_text=text)
+        _run(
+            ["powershell", "-NoProfile", "-Command", "Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
+            input_text=text,
+        )
     else:
-        if shutil.which("xclip"):  _run(["xclip","-selection","clipboard"], input_text=text); return
-        if shutil.which("xsel"):   _run(["xsel","--clipboard","--input"], input_text=text); return
+        if shutil.which("xclip"):
+            _run(["xclip", "-selection", "clipboard"], input_text=text)
+            return
+        if shutil.which("xsel"):
+            _run(["xsel", "--clipboard", "--input"], input_text=text)
+            return
         sys.stdout.write(text)
 
 # ---------- protect code & math blocks ----------
@@ -38,9 +65,10 @@ DOLLAR_BLOCK_RE   = re.compile(r"\$\$[\s\S]*?\$\$", re.MULTILINE)
 def _protect(text: str) -> Tuple[str, List[str]]:
     sent: List[str] = []
     def keep(s: str, tag: str) -> str:
-        sent.append(s); return f"@@{tag}_{len(sent)-1}@@"
+        sent.append(s)
+        return f"@@{tag}_{len(sent)-1}@@"
     text = BACKTICK_FENCE_RE.sub(lambda m: keep(m.group(0), "CODEFENCE"), text)
-    text = INLINE_CODE_RE.sub (lambda m: keep(m.group(0), "INLINE"),    text)
+    text = INLINE_CODE_RE.sub(lambda m: keep(m.group(0), "INLINE"), text)
     return text, sent
 
 def _protect_math(text: str, sent: List[str]) -> str:
@@ -60,7 +88,9 @@ LATEX_TOKENS_RE = re.compile(
     r"\\left|\\right|\\begin|\\end|\\displaystyle|\\boxed)"
 )
 MATHISH_OP_RE = re.compile(r"[=+\-*/^_]")
-def looks_like_latex(s: str) -> bool: return bool(LATEX_TOKENS_RE.search(s))
+
+def looks_like_latex(s: str) -> bool:
+    return bool(LATEX_TOKENS_RE.search(s))
 
 # ---------- conversions ----------
 def convert_code_fences(text: str) -> str:
@@ -74,78 +104,109 @@ def convert_code_fences(text: str) -> str:
     return BACKTICK_FENCE_RE.sub(repl, text)
 
 def convert_backslash_brackets(text: str) -> str:
+    # \[ ... ] -> $$ ... $$
     text = re.sub(r"\\\[\s*([\s\S]*?)\s*\\\]", r"$$\n\1\n$$", text)
+    # \( ... ) -> $ ... $
     text = re.sub(r"\\\(\s*([^\r\n]*?)\s*\\\)", r"$\1$", text)
     return text
 
 def convert_square_bracket_blocks(text: str) -> str:
+    # Standalone [ block ] on its own lines -> $$ block $$
     patt = re.compile(r"^[ \t]*\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\][ \t]*$", re.MULTILINE)
     return patt.sub(lambda m: f"\n$$\n{m.group(1).strip()}\n$$\n", text)
 
 # ---------- stack-based outer math parentheses ----------
 def protect_outer_math_parens(text: str, sent: List[str]) -> str:
-    s = text; stack=[]; pairs=[]
-    for i,ch in enumerate(s):
-        if ch=='(':
+    s = text
+    stack = []
+    pairs = []
+    for i, ch in enumerate(s):
+        if ch == '(':
             stack.append(i)
-        elif ch==')' and stack:
-            start=stack.pop(); pairs.append((start,i))
-    if not pairs: return text
+        elif ch == ')' and stack:
+            start = stack.pop()
+            pairs.append((start, i))
+    if not pairs:
+        return text
 
     def is_math_outer(content: str) -> bool:
-        if '$' in content: return False
-        c=content.strip()
-        if len(c)<5: return False
-        if MATHISH_OP_RE.search(c) or looks_like_latex(c): return True
+        if '$' in content:
+            return False
+        c = content.strip()
+        if len(c) < 2:
+            return False
+        if MATHISH_OP_RE.search(c) or looks_like_latex(c):
+            return True
+        # simple tokens like T, x, dT, X^T X etc.
+        if re.match(r"^[A-Za-z](?:[A-Za-z0-9^_ \+\-\*/\(\)\\]+)?$", c):
+            return True
         return False
 
-    cand=[]
-    for a,b in pairs:
-        inner=s[a+1:b]
-        if is_math_outer(inner): cand.append((a,b))
-    if not cand: return text
-    cand.sort(key=lambda t:(t[0],-t[1]))
+    cand = []
+    for a, b in pairs:
+        inner = s[a+1:b]
+        if is_math_outer(inner):
+            cand.append((a, b))
+    if not cand:
+        return text
+    cand.sort(key=lambda t: (t[0], -t[1]))
 
-    selected=[]
-    for a,b in cand:
-        if any(pa<=a and b<=pb for (pa,pb) in selected): continue
-        selected.append((a,b))
+    selected = []
+    for a, b in cand:
+        if any(pa <= a and b <= pb for (pa, pb) in selected):
+            continue
+        selected.append((a, b))
 
-    out=[]; pos=0
-    for a,b in sorted(selected,key=lambda t:t[0]):
-        if a<pos: continue
+    out = []
+    pos = 0
+    for a, b in sorted(selected, key=lambda t: t[0]):
+        if a < pos:
+            continue
         out.append(s[pos:a])
-        inner=s[a+1:b].strip()
-        token=f"@@INL_{len(sent)}@@"
+        inner = s[a+1:b].strip()
+        token = f"@@INL_{len(sent)}@@"
+        # if multiline or begin{...} present, promote to $$...$$
         sent.append(f"$${inner}$$" if ("\n" in inner or "\\begin{" in inner) else f"${inner}$")
-        out.append(token); pos=b+1
+        out.append(token)
+        pos = b + 1
     out.append(s[pos:])
     return "".join(out)
 
 # ---------- inline conversions ----------
 def convert_token_paren_numeric(text: str) -> str:
+    # Turn f(x), T(x,y) where leading token is glued to "(" into inline math
     patt = re.compile(r"(?P<pre>[A-Za-z0-9])\(\s*(?P<inner>[A-Za-z0-9 ,+\-*/^_=.:;\\]+?)\s*\)")
     return patt.sub(lambda m: f"${m.group('pre')}({m.group('inner').strip()})$", text)
 
 def convert_inline_parentheses(text: str) -> str:
-    ALLOW={"x","y","z","T","v","u"}
+    ALLOW = {"x", "y", "z", "T", "v", "u"}
     def is_inline_math_candidate(s: str) -> bool:
-        if looks_like_latex(s): return True
-        if any(ch in s for ch in "=+*/^_"): return True
-        if re.search(r"\d", s): return True
-        if re.search(r"^[A-Za-z]\s*\([^()\n]*\)$", s): return True
-        if s in ALLOW or re.match(r"^d[A-Za-z]+$", s): return True
+        if looks_like_latex(s):
+            return True
+        if any(ch in s for ch in "=+*/^_"):
+            return True
+        if re.search(r"\d", s):
+            return True
+        if re.search(r"^[A-Za-z]\s*\([^()\n]*\)$", s):
+            return True
+        if s in ALLOW or re.match(r"^d[A-Za-z]+$", s):
+            return True
         return False
 
     def repl(m: Match[str]) -> str:
-        inner=m.group(1)
-        if "\n" in inner or "[" in inner or "]" in inner or "$" in inner: return m.group(0)
-        s=inner.strip()
-        if s in ALLOW or re.match(r"^d[A-Za-z]+$", s): return f"${s}$"
-        if is_inline_math_candidate(s): return f"${s}$"
+        inner = m.group(1)
+        if "\n" in inner or "[" in inner or "]" in inner or "$" in inner:
+            return m.group(0)
+        s = inner.strip()
+        if s in ALLOW or re.match(r"^d[A-Za-z]+$", s):
+            return f"${s}$"
+        if is_inline_math_candidate(s):
+            return f"${s}$"
         return m.group(0)
 
+    # Handle (( ... )) -> $ ( ... ) $
     text = re.sub(r"\(\(([^()\r\n]{1,160})\)\)", lambda m: f"$({m.group(1).strip()})$", text)
+    # Handle ( ... ) inline
     return re.sub(r"\(([^()\r\n]{1,160})\)", repl, text)
 
 # ---------- math block regex ----------
@@ -164,7 +225,8 @@ def _fix_matrix_rows(env_body: str) -> str:
     for i, raw in enumerate(rows_in):
         line = raw.rstrip()
         if not line:
-            rows_out.append(line); continue
+            rows_out.append(line)
+            continue
 
         # 1) Single "\" at EOL -> "\\" (proper break)
         line = re.sub(r"(?<!\\)\\\s*$", r"\\", line)
@@ -174,7 +236,6 @@ def _fix_matrix_rows(env_body: str) -> str:
         if m:
             core = m.group(1).rstrip()
             pt   = m.group(2)
-            # If already ends with \\ or \\[..], reduce to one \ then append \\[pt]
             if re.search(r"\\\\(\[\d+pt\])?\s*$", core):
                 core = re.sub(r"\\\\(\[\d+pt\])?\s*$", r"\\", core)
             rows_out.append(f"{core}\\\\[{pt}]")
@@ -214,44 +275,61 @@ def promote_envs_inline_to_display(text: str) -> str:
 
 # ---------- spacing/normalization ----------
 def ensure_blank_lines_around_display(text: str) -> str:
-    # Guarantee a blank line before and after $$...$$
+    # Normalize $$ borders
     text = re.sub(r"[ \t]*\$\$\s*\n", r"\n$$\n", text)
-    text = re.sub(r"\n\s*\$\$\s*[ \t]*", r"\n$$", text)  # normalize borders
+    text = re.sub(r"\n\s*\$\$\s*[ \t]*", r"\n$$", text)
     # Insert blank line before $$ if missing
     text = re.sub(r"([^\n])\n\$\$", r"\1\n\n$$", text)
     # Insert blank line after $$ if missing
     text = re.sub(r"\$\$\n([^\n])", r"$$\n\n\1", text)
-    # Specific: if $$ followed immediately by a numbered list, ensure blank line
+    # If $$ followed immediately by a numbered list, ensure blank line
     text = re.sub(r"\$\$\s*\n\s*(?=(\d+\.) )", "$$\n\n", text)
     return text
 
 def fix_inline_spacing(text: str) -> str:
-    # Remove spaces immediately inside SINGLE-$ borders (not $$)
-    text = re.sub(r"(?<!\$)\$\s+", "$", text)          # "$ x" -> "$x"
-    text = re.sub(r"\s+\$(?!\$)", "$", text)           # "x $" -> "x$"
-    # Ensure a space after $math$ when glued to alnum
+    # Trim spaces immediately INSIDE single-$ borders (not $$)
+    # "$ x" -> "$x"
+    text = re.sub(r"(?<!\$)\$\s+", "$", text)
+    # "x $" -> "x$"
+    text = re.sub(r"\s+\$(?!\$)", "$", text)
+
+    # Ensure a space AFTER $math$ when glued to a word/number: "$x$word" -> "$x$ word"
     text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)
-    # Normalize spaces around inline math (when surrounded by spaces)
-    text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)
-    # NEW: collapse any "$  something" that slipped through
-    text = re.sub(r"(?<!\$)\$\s+([^\$])", r"$\1", text)  # "$ w" -> "$w"
-    # NEW: ensure a space before single $ if glued to a word/number (e.g. "amount$dT$" -> "amount $dT$")
-    # issue: text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
-    # Ensure a space before an *opening* single $ if glued to text
-    # e.g. "amount$dT$" -> "amount $dT$"; won't touch closing "$" before punctuation/space
+
+    # Normalize spaces AROUND inline math *without touching newlines*
+    # " ...  $x$  ..." -> " ... $x$ ..."
+    text = re.sub(r"[ \t]+\$(.+?)\$[ \t]+", r" $\1$ ", text)
+
+    # Collapse any "$  w" that slipped through to "$w"
+    text = re.sub(r"(?<!\$)\$\s+([^\$])", r"$\1", text)
+
+    # Ensure a space BEFORE an OPENING single $ if glued to a word/number/command:
+    # "amount$dT$" -> "amount $dT$" (won't touch closing $)
     text = re.sub(r"([A-Za-z0-9])\$(?=[A-Za-z0-9\\(])", r"\1 $", text)
+
+    # Final inside-border cleanup (both sides) in case any rule reintroduced spaces
+    # "$ x$" -> "$x$" and "$x $" -> "$x$"
+    text = re.sub(r"(?<!\$)\$\s+([^$]*?)\$", r"$\1$", text)
+    text = re.sub(r"\$([^$]*?)\s+\$", r"$\1$", text)
+
     return text
-
-
 
 def normalize_dollars(text: str) -> str:
-    text = re.sub(r"\${3,}", "$$", text)
-    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)  # one-line $$...$$
+    text = re.sub(r"\${3,}", "$$", text)  # collapse $$$ -> $$
+    # one-line $$...$$ normalization
+    text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)
     return text
 
-# ---------- master pipeline (v4.8) ----------
+# Bullet-star stabilizer: keep plain bullets as '- ' (avoid stray '* ' lines)
+BULLET_STAR_LINE_RE = re.compile(r"(?m)^\*[ \t]+(?=\$|[A-Za-z0-9])")
+def stabilize_list_bullets(text: str) -> str:
+    return BULLET_STAR_LINE_RE.sub("- ", text)
+
+# ---------- master pipeline ----------
 def convert(text: str) -> str:
     protected, sent = _protect(text)
+
+    # Early conversions
     protected = convert_code_fences(protected)
     protected = convert_backslash_brackets(protected)
     protected = convert_square_bracket_blocks(protected)
@@ -285,6 +363,9 @@ def convert(text: str) -> str:
     protected = ensure_blank_lines_around_display(protected)
     protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
+
+    # Stabilize bullets
+    protected = stabilize_list_bullets(protected)
 
     # Restore protected content
     return _unprotect(protected, sent)
