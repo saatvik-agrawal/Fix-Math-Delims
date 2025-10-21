@@ -119,7 +119,6 @@ def protect_outer_math_parens(text: str, sent: List[str]) -> str:
         inner = s[a+1:b]
         if is_math_outer(inner):
             candidates.append((a, b))
-
     if not candidates:
         return text
 
@@ -137,8 +136,15 @@ def protect_outer_math_parens(text: str, sent: List[str]) -> str:
             continue
         result_parts.append(s[pos:a])
         inner = s[a+1:b].strip()
-        token = f"@@INL_{len(sent)}@@"
-        sent.append(f"${inner}$")
+
+        # v4.4: promote to display if multi-line or LaTeX environments present
+        if ("\n" in inner) or ("\\begin{" in inner):
+            token = f"@@INL_{len(sent)}@@"
+            sent.append(f"$${inner}$$")
+        else:
+            token = f"@@INL_{len(sent)}@@"
+            sent.append(f"${inner}$")
+
         result_parts.append(token)
         pos = b + 1
     result_parts.append(s[pos:])
@@ -153,39 +159,23 @@ def convert_token_paren_numeric(text: str) -> str:
 def convert_inline_parentheses(text: str) -> str:
     ALLOW_EXACT = {"x","y","z","T","v","u"}
 
-    # v4.2/4.3 stricter check: require real math signals, digits, function call, or d-variables.
     def is_inline_math_candidate(inner: str) -> bool:
-        if looks_like_latex(inner):  # \frac, \nabla, \alpha, ...
-            return True
-        # strong math operators / relations (exclude a plain hyphen-only prose trigger)
-        if any(ch in inner for ch in "=+*/^_"):
-            return True
-        # digits anywhere -> likely a math eval, coordinates, etc.
-        if re.search(r"\d", inner):
-            return True
-        # function call like f(x) or T(x,y)
-        if re.search(r"^[A-Za-z]\s*\([^()\n]*\)$", inner):
-            return True
-        # standalone variable or d-something like dx, dT
-        if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner):
-            return True
+        if looks_like_latex(inner):  return True
+        if any(ch in inner for ch in "=+*/^_"): return True
+        if re.search(r"\d", inner):  return True
+        if re.search(r"^[A-Za-z]\s*\([^()\n]*\)$", inner): return True
+        if inner in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner): return True
         return False
 
     def repl(m: Match[str]) -> str:
         inner = m.group(1)
-        if "\n" in inner or "[" in inner or "]" in inner:
-            return m.group(0)
-        if "$" in inner:
-            return m.group(0)
-
+        if "\n" in inner or "[" in inner or "]" in inner: return m.group(0)
+        if "$" in inner: return m.group(0)
         inner_stripped = inner.strip()
-        if inner_stripped in ALLOW_EXACT or re.match(r"^d[A-Za-z]+$", inner_stripped):
+        if inner_stripped in {"x","y","z","T","v","u"} or re.match(r"^d[A-Za-z]+$", inner_stripped):
             return f"${inner_stripped}$"
-
         if is_inline_math_candidate(inner_stripped):
             return f"${inner_stripped}$"
-
-        # otherwise, leave normal prose parentheses alone
         return m.group(0)
 
     # ((x+y)) -> $ (x+y) $
@@ -203,6 +193,11 @@ def _fix_matrix_rows(env_body: str) -> str:
         line = raw.rstrip()
         if not line:
             rows_out.append(line); continue
+
+        # v4.4: turn a single trailing "\" into "\\" (proper row break)
+        if re.search(r"(?<!\\)\\\s*$", line):
+            line = re.sub(r"(?<!\\)\\\s*$", r"\\", line)
+
         # move trailing [3pt] into a proper \\[3pt]
         m = re.match(r"^(.*?)(?<!\\)\[\s*(\d+pt)\s*\]\s*$", line)
         if m:
@@ -229,7 +224,12 @@ def fix_matrices_in_math_blocks(text: str) -> str:
         return f"$${inner}$$"
     return MATH_BLOCK_RE.sub(repl_math, text)
 
-# ---------- spacing & normalization (v4.2) ----------
+# ---------- promote envs found inside inline $...$ ----------
+ENV_IN_INLINE_RE = re.compile(r"\$([^$]*\\begin\{[A-Za-z*]+\}[\s\S]*?\\end\{[A-Za-z*]+\}[^$]*)\$")
+def promote_envs_inline_to_display(text: str) -> str:
+    return ENV_IN_INLINE_RE.sub(r"$$\1$$", text)
+
+# ---------- spacing & normalization ----------
 def fix_inline_spacing(text: str) -> str:
     # 0) Strip inner spaces immediately inside inline math: $ x $ -> $x$
     text = re.sub(r"\$(\s*)([^$]*?)(\s*)\$", r"$\2$", text)
@@ -257,7 +257,7 @@ def normalize_dollars(text: str) -> str:
     text = re.sub(r"\$\$\r?\n([^\r\n]+)\r?\n\$\$", r"$$\1$$", text)
     return text
 
-# ---------- master pipeline (v4.3) ----------
+# ---------- master pipeline (v4.4) ----------
 def convert(text: str) -> str:
     protected, sent = _protect(text)
     protected = convert_code_fences(protected)
@@ -277,6 +277,9 @@ def convert(text: str) -> str:
     protected = convert_token_paren_numeric(protected)
     protected = convert_inline_parentheses(protected)
 
+    # NEW: Promote any inline $...$ that contains environments to $$...$$
+    protected = promote_envs_inline_to_display(protected)
+
     # Spacing and normalization
     protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
@@ -287,7 +290,7 @@ def main():
     src = get_clipboard() or sys.stdin.read()
     out = convert(src)
     set_clipboard(out)
-    # do NOT print (prevents aText double-insert)
+    # (no print; avoids aText double-insert)
     # sys.stdout.write(out)
 
 if __name__ == "__main__":
