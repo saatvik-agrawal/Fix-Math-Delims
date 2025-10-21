@@ -235,7 +235,13 @@ def fix_inline_spacing(text: str) -> str:
     text = re.sub(r"\s+\$(.+?)\$\s+", r" $\1$ ", text)
     # NEW: collapse any "$  something" that slipped through
     text = re.sub(r"(?<!\$)\$\s+([^\$])", r"$\1", text)  # "$ w" -> "$w"
+    # NEW: ensure a space before single $ if glued to a word/number (e.g. "amount$dT$" -> "amount $dT$")
+    # issue: text = re.sub(r"([A-Za-z0-9])\$(?=[^$])", r"\1 $", text)
+    # Ensure a space before an *opening* single $ if glued to text
+    # e.g. "amount$dT$" -> "amount $dT$"; won't touch closing "$" before punctuation/space
+    text = re.sub(r"([A-Za-z0-9])\$(?=[A-Za-z0-9\\(])", r"\1 $", text)
     return text
+
 
 
 def normalize_dollars(text: str) -> str:
