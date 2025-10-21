@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-import os, re, sys, shutil, subprocess
-from typing import Optional, Match, List, Tuple
-
 """
-Fix-Math-Delims — v4.8.3
+Fix-Math-Delims — v4.8.4
 
 Converts ChatGPT-style math snippets into Obsidian-friendly Markdown/LaTeX.
 
@@ -17,6 +14,12 @@ Converts ChatGPT-style math snippets into Obsidian-friendly Markdown/LaTeX.
 - Cleans spacing around inline $...$ (no "$ x$", "x $", "amount$dT$" etc.)
 """
 
+import os
+import re
+import sys
+import shutil
+import subprocess
+from typing import Optional, Match, List, Tuple
 
 # ---------- clipboard helpers ----------
 def _run(cmd: list, input_text: Optional[str] = None) -> subprocess.CompletedProcess:
@@ -287,30 +290,26 @@ def ensure_blank_lines_around_display(text: str) -> str:
     return text
 
 def fix_inline_spacing(text: str) -> str:
-    # Trim spaces immediately INSIDE single-$ borders (not $$)
+    # --- Inside-border trims (single-$ only) ---
     # "$ x" -> "$x"
     text = re.sub(r"(?<!\$)\$\s+", "$", text)
     # "x $" -> "x$"
     text = re.sub(r"\s+\$(?!\$)", "$", text)
 
-    # Ensure a space AFTER $math$ when glued to a word/number: "$x$word" -> "$x$ word"
+    # --- Put a space AFTER $math$ if glued to word/number: "$x$word" -> "$x$ word"
     text = re.sub(r"\$([^$]+)\$([A-Za-z0-9])", r"$\1$ \2", text)
 
-    # Normalize spaces AROUND inline math *without touching newlines*
-    # " ...  $x$  ..." -> " ... $x$ ..."
-    text = re.sub(r"[ \t]+\$(.+?)\$[ \t]+", r" $\1$ ", text)
-
-    # Collapse any "$  w" that slipped through to "$w"
-    text = re.sub(r"(?<!\$)\$\s+([^\$])", r"$\1", text)
-
-    # Ensure a space BEFORE an OPENING single $ if glued to a word/number/command:
+    # --- Put a space BEFORE an OPENING single $ if glued to word/number/command ---
     # "amount$dT$" -> "amount $dT$" (won't touch closing $)
     text = re.sub(r"([A-Za-z0-9])\$(?=[A-Za-z0-9\\(])", r"\1 $", text)
 
-    # Final inside-border cleanup (both sides) in case any rule reintroduced spaces
-    # "$ x$" -> "$x$" and "$x $" -> "$x$"
-    text = re.sub(r"(?<!\$)\$\s+([^$]*?)\$", r"$\1$", text)
-    text = re.sub(r"\$([^$]*?)\s+\$", r"$\1$", text)
+    # --- Normalize spaces *around* inline math but do NOT eat newlines ---
+    # " ...  $x$  ..." -> " ... $x$ ..."
+    text = re.sub(r"[ \t]+\$(.+?)\$[ \t]+", r" $\1$ ", text)
+
+    # --- Final inside-border clean (both sides) to collapse any "$ x$" / "$x $" ---
+    text = re.sub(r"(?<!\$)\$\s+([^$]*?)\$", r"$\1$", text)  # "$ x$" -> "$x$"
+    text = re.sub(r"\$([^$]*?)\s+\$", r"$\1$", text)         # "$x $" -> "$x$"
 
     return text
 
@@ -324,6 +323,17 @@ def normalize_dollars(text: str) -> str:
 BULLET_STAR_LINE_RE = re.compile(r"(?m)^\*[ \t]+(?=\$|[A-Za-z0-9])")
 def stabilize_list_bullets(text: str) -> str:
     return BULLET_STAR_LINE_RE.sub("- ", text)
+
+# Ensure "- " (space after dash) for list items
+def ensure_dash_space_for_bullets(text: str) -> str:
+    # If a line starts with "-" and then a non-space, insert a single space.
+    # Examples: "-$x$" -> "- $x$", "-text" -> "- text"
+    return re.sub(r"(?m)^-\s*(?=\S)", "- ", text)
+
+# If a closing $ is immediately followed by a bullet "- ", reinstate a newline
+def unglue_bullet_after_math(text: str) -> str:
+    # "...$- something" -> "...$\n- something"
+    return re.sub(r"\$(?=-\s)", "$\n", text)
 
 # ---------- master pipeline ----------
 def convert(text: str) -> str:
@@ -364,7 +374,11 @@ def convert(text: str) -> str:
     protected = fix_inline_spacing(protected)
     protected = normalize_dollars(protected)
 
-    # Stabilize bullets
+    # Bullet/list spacing and ungluing
+    protected = ensure_dash_space_for_bullets(protected)
+    protected = unglue_bullet_after_math(protected)
+
+    # Stabilize bullets (convert stray '* ' to '- ')
     protected = stabilize_list_bullets(protected)
 
     # Restore protected content
